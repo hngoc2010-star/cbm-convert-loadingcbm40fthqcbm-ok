@@ -1,0 +1,206 @@
+(function () {
+  const $ = (id) => document.getElementById(id);
+
+  const thicknessEl = $("thickness");
+  const widthEl = $("width");
+  const lengthEl = $("length");
+  const densityEl = $("density");
+  const pcsMinEl = $("pcsMin");
+  const pcsMaxEl = $("pcsMax");
+
+  const cbmPerPcsEl = $("cbmPerPcs");
+  const pcsPerCbmEl = $("pcsPerCbm");
+  const bestPlanEl = $("bestPlan");
+  const bestInfoEl = $("bestInfo");
+  const resultTableEl = $("resultTable");
+  const resultCountEl = $("resultCount");
+
+  const MIN_CBM = 48;
+  const MAX_CBM = 52;
+  const MAX_TONS = 32.5;
+  const IDEAL_CBM = 50;
+
+  function setRealVH() {
+    const vh = window.innerHeight * 0.01;
+    document.documentElement.style.setProperty("--vh", `${vh}px`);
+  }
+
+  function n(value) {
+    const x = parseFloat(value);
+    return Number.isFinite(x) ? x : 0;
+  }
+
+  function i(value) {
+    const x = parseInt(value, 10);
+    return Number.isFinite(x) ? x : 0;
+  }
+
+  function fmt(num, digits) {
+    return Number(num).toLocaleString("en-US", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    });
+  }
+
+  function classify(totalCbm, totalTons) {
+    if (totalCbm >= MIN_CBM && totalCbm <= MAX_CBM && totalTons <= MAX_TONS) {
+      return { text: "Đạt", cls: "good", score: Math.abs(totalCbm - IDEAL_CBM) };
+    }
+
+    if (totalTons > MAX_TONS) {
+      return {
+        text: "Vượt tấn",
+        cls: "bad",
+        score: 1000 + (totalTons - MAX_TONS) * 100 + Math.abs(totalCbm - IDEAL_CBM)
+      };
+    }
+
+    if (totalCbm < MIN_CBM) {
+      return {
+        text: "Thiếu cbm",
+        cls: "warn",
+        score: 100 + (MIN_CBM - totalCbm) * 10
+      };
+    }
+
+    if (totalCbm > MAX_CBM) {
+      return {
+        text: "Vượt cbm",
+        cls: "warn",
+        score: 200 + (totalCbm - MAX_CBM) * 10
+      };
+    }
+
+    return {
+      text: "Check",
+      cls: "warn",
+      score: 9999
+    };
+  }
+
+  function renderEmpty(message) {
+    cbmPerPcsEl.textContent = "-";
+    pcsPerCbmEl.textContent = "-";
+    bestPlanEl.textContent = "-";
+    bestInfoEl.textContent = "CBM: - | Tấn: -";
+    resultCountEl.textContent = "0";
+    resultTableEl.innerHTML = `<tr><td colspan="5" class="empty">${message}</td></tr>`;
+  }
+
+  function calculate() {
+    const thickness = n(thicknessEl.value);
+    const width = n(widthEl.value);
+    const length = n(lengthEl.value);
+    const density = n(densityEl.value);
+    let pcsMin = i(pcsMinEl.value);
+    let pcsMax = i(pcsMaxEl.value);
+
+    if (thickness <= 0 || width <= 0 || length <= 0 || density <= 0) {
+      renderEmpty("Nhập đủ Thickness, Width, Length, kg/cbm");
+      return;
+    }
+
+    if (pcsMin <= 0) pcsMin = 1;
+    if (pcsMax < pcsMin) pcsMax = pcsMin;
+
+    const cbmPerPcs = (thickness / 1000) * (width / 1000) * (length / 1000);
+    if (cbmPerPcs <= 0) {
+      renderEmpty("Dữ liệu không hợp lệ");
+      return;
+    }
+
+    const pcsPerCbm = 1 / cbmPerPcs;
+
+    cbmPerPcsEl.textContent = fmt(cbmPerPcs, 3);
+    pcsPerCbmEl.textContent = fmt(pcsPerCbm, 3);
+
+    const rows = [];
+
+    for (let pcsPerBundle = pcsMin; pcsPerBundle <= pcsMax; pcsPerBundle++) {
+      const bundleCbm = pcsPerBundle * cbmPerPcs;
+      const bundleKg = bundleCbm * density;
+
+      if (bundleCbm <= 0 || bundleKg <= 0) continue;
+
+      const bundlesByMaxCbm = Math.floor(MAX_CBM / bundleCbm);
+      const bundlesByMaxWeight = Math.floor((MAX_TONS * 1000) / bundleKg);
+      const bundles = Math.min(bundlesByMaxCbm, bundlesByMaxWeight);
+
+      if (bundles <= 0) continue;
+
+      const totalPcs = pcsPerBundle * bundles;
+      const totalCbm = totalPcs * cbmPerPcs;
+      const totalTons = (totalCbm * density) / 1000;
+
+      const note = classify(totalCbm, totalTons);
+
+      rows.push({
+        pcsPerBundle,
+        bundles,
+        totalPcs,
+        totalCbm,
+        totalTons,
+        note: note.text,
+        cls: note.cls,
+        score: note.score
+      });
+    }
+
+    if (!rows.length) {
+      bestPlanEl.textContent = "-";
+      bestInfoEl.textContent = "CBM: - | Tấn: -";
+      resultCountEl.textContent = "0";
+      resultTableEl.innerHTML = `<tr><td colspan="5" class="empty">Không có phương án phù hợp</td></tr>`;
+      return;
+    }
+
+    rows.sort((a, b) => a.score - b.score || Math.abs(a.totalCbm - IDEAL_CBM) - Math.abs(b.totalCbm - IDEAL_CBM));
+
+    const best = rows[0];
+    bestPlanEl.textContent = `${best.pcsPerBundle} tấm/kiện · ${best.bundles} kiện`;
+    bestInfoEl.textContent = `CBM: ${fmt(best.totalCbm, 3)} | Tấn: ${fmt(best.totalTons, 3)}`;
+
+    const topRows = rows.slice(0, 12);
+    resultCountEl.textContent = String(topRows.length);
+
+    resultTableEl.innerHTML = topRows.map((row) => {
+      return `
+        <tr>
+          <td>${row.pcsPerBundle}</td>
+          <td>${row.bundles}</td>
+          <td>${fmt(row.totalCbm, 3)}</td>
+          <td>${fmt(row.totalTons, 3)}</td>
+          <td class="${row.cls}">${row.note}</td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  function bindAutoCalculate() {
+    const inputs = [
+      thicknessEl,
+      widthEl,
+      lengthEl,
+      densityEl,
+      pcsMinEl,
+      pcsMaxEl
+    ];
+
+    inputs.forEach((input) => {
+      input.addEventListener("input", calculate);
+      input.addEventListener("change", calculate);
+      input.addEventListener("focus", () => {
+        setTimeout(() => {
+          input.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 120);
+      });
+    });
+  }
+
+  window.addEventListener("resize", setRealVH);
+  window.addEventListener("orientationchange", setRealVH);
+
+  setRealVH();
+  bindAutoCalculate();
+  calculate();
+})();
